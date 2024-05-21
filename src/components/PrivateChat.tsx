@@ -1,16 +1,15 @@
 import { User } from "@/app/page";
 import useLocalStorage from "@/hooks/useLocalStorage";
-import { connectSocket } from "@/utils/socket";
 import dayjs from "dayjs";
-import React, { FormEvent, useEffect, useState } from "react";
+import React, { FormEvent, useEffect, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import isToday from "dayjs/plugin/isToday";
+import socket from "@/utils/socket";
 
 dayjs.extend(isToday);
 
 interface MessageCreate {
   id: string;
-  to: string;
   receiverId: string;
   content: string;
 }
@@ -18,7 +17,7 @@ interface MessageCreate {
 interface Message {
   id?: string;
   content: string;
-  readTime?: Date;
+  readTime?: string;
   timestamp?: Date;
   fromSelf: boolean;
   tempId?: string;
@@ -35,13 +34,34 @@ interface CallbackSendMessage {
   tempId: string;
 }
 
+interface AlertMessage {
+  visible: boolean;
+  content: string;
+  from: string;
+}
+
+const truncateContent = (content: string, limit: number = 100) => {
+  if (content.length > limit) {
+    return content.slice(0, limit) + "...";
+  }
+  return content;
+};
+
+const TIME_ALERT_MESSAGE = 5000;
+
 const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [newMessage, setNewMessage] = useState("");
+  const [newMessage, setNewMessage] = useState<string>("");
   const [token] = useLocalStorage("token", "");
   const [user] = useLocalStorage("user", "");
+  const audioRef = useRef<HTMLAudioElement>(null);
   const [callbackSendMessage, setCallbackSendMessage] =
     useState<CallbackSendMessage | null>(null);
+  const [alertMessage, setAlertMessage] = useState<AlertMessage>({
+    visible: false,
+    content: "",
+    from: "",
+  });
 
   useEffect(() => {
     if (callbackSendMessage) {
@@ -58,9 +78,23 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
   }, [callbackSendMessage, messages]);
 
   useEffect(() => {
+    socket.on("privateMessage", (message: Message & { from: string }) => {
+      if (selectedUser && selectedUser?.email === message.from) {
+        setMessages((prevMessages) => [...prevMessages, message]);
+        updateReadMessages([message]);
+      } else {
+        setAlertMessage({
+          visible: true,
+          content: truncateContent(message.content),
+          from: message.from,
+        });
+      }
+      if (audioRef.current) {
+        audioRef.current.src = "/message-alert.wav";
+        audioRef.current.play();
+      }
+    });
     if (selectedUser) {
-      const socket = connectSocket(token);
-
       socket.emit(
         "messagesHistorical",
         selectedUser?.userId,
@@ -70,13 +104,6 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
         }
       );
 
-      socket.on("privateMessage", (message: Message & { from: string }) => {
-        if (selectedUser?.email === message.from) {
-          setMessages((prevMessages) => [...prevMessages, message]);
-          updateReadMessages([message]);
-        }
-      });
-
       socket.on(
         "messagesRead",
         ({
@@ -85,10 +112,10 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
           from,
         }: {
           messageIds: string[];
-          readTime: Date;
+          readTime: string;
           from: string;
         }) => {
-          if (from === selectedUser?.email || user === from) {
+          if (from === selectedUser?.email || JSON.parse(user).email === from) {
             setMessages((prevMessages) =>
               prevMessages.map((message) =>
                 messageIds.includes(message.id!)
@@ -99,21 +126,19 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
           }
         }
       );
-
-      return () => {
-        socket.off("privateMessage");
-        socket.off("messagesRead");
-      };
     }
+
+    return () => {
+      socket.off("messagesRead");
+      socket.off("privateMessage");
+    };
   }, [selectedUser, token, user]);
 
   const updateReadMessages = (messages: Message[]) => {
-    const socket = connectSocket(token);
-
     const unreadMessages = messages.filter(
       (message) => !message.readTime && !message.fromSelf
     );
-    const unreadMessageIds = unreadMessages.map((message) => message.id);
+    const unreadMessageIds = unreadMessages.map((message) => message.id!);
     if (unreadMessageIds.length) {
       socket.emit("messagesRead", unreadMessageIds);
     }
@@ -121,12 +146,10 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
 
   const handleMessageSend = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const socket = connectSocket(token);
 
     if (!selectedUser || !newMessage) return;
     const message: MessageCreate = {
       receiverId: selectedUser.userId,
-      to: selectedUser.id,
       content: newMessage,
       id: uuidv4(),
     };
@@ -153,7 +176,33 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
 
   return (
     <div className="p-4 mx-auto bg-white shadow-lg rounded-lg">
+      <audio ref={audioRef} src="/message-alert.wav" preload="auto" />
       <h2 className="text-2xl font-bold mb-4 text-center">Private Chat</h2>
+      {alertMessage.visible && (
+        <div
+          className="fixed top-4 right-4 bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded flex flex-col"
+          role="alert"
+        >
+          <span
+            onClick={() =>
+              setAlertMessage({ visible: false, content: "", from: "" })
+            }
+            className="absolute top-0 bottom-0 right-0 px-1 py-1"
+          >
+            <svg
+              className="fill-current h-4 w-4 text-blue-500"
+              role="button"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+            >
+              <title>Close</title>
+              <path d="M14.348 5.652a1 1 0 011.415 0l.087.086a1 1 0 010 1.415L11.415 12l4.435 4.435a1 1 0 01-1.415 1.415l-4.435-4.435-4.435 4.435a1 1 0 01-1.415-1.415l4.435-4.435-4.435-4.435a1 1 0 011.415-1.415l4.435 4.435 4.435-4.435z" />
+            </svg>
+          </span>
+          <strong className="font-bold">{alertMessage.from}</strong>
+          <span className="block sm:inline">{alertMessage.content}</span>
+        </div>
+      )}
       {selectedUser ? (
         <div>
           <div className="mb-4 text-center">
@@ -178,13 +227,11 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
                   <p className="">{message.content}</p>
                   <div className="text-xs mt-1">
                     {message.timestamp ? (
-                      <small className="text-white-500">
+                      <small className="text-black rounded-lg bg-green-100 py-0.5 px-1">
                         Sent at{" "}
-                        {dayjs(message.readTime).isToday()
-                          ? dayjs(message.timestamp).format("HH:mm:ss")
-                          : dayjs(message.timestamp).format(
-                              "HH:mm:ss DD/MM/YYYY"
-                            )}
+                        {dayjs(message.timestamp).isToday()
+                          ? dayjs(message.timestamp).format("HH:mm")
+                          : dayjs(message.timestamp).format("HH:mm DD/MM/YYYY")}
                       </small>
                     ) : (
                       <small className="text-red-600">send failed</small>
@@ -192,12 +239,12 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
                     {message.readTime && (
                       <>
                         <span> - </span>
-                        <small className="text-white-500">
+                        <small className="text-black rounded-lg bg-red-100 py-0.5 px-1">
                           Read at{" "}
                           {dayjs(message.readTime).isToday()
-                            ? dayjs(message.timestamp).format("HH:mm:ss")
-                            : dayjs(message.timestamp).format(
-                                "HH:mm:ss DD/MM/YYYY"
+                            ? dayjs(message.readTime).format("HH:mm")
+                            : dayjs(message.readTime).format(
+                                "HH:mm DD/MM/YYYY"
                               )}
                         </small>
                       </>

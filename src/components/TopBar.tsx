@@ -9,6 +9,7 @@ const TopBar: React.FC = () => {
   const [, , , removeToken] = useLocalStorage("token", "");
   const [user, , , removeUser] = useLocalStorage("user", "");
   const router = useRouter();
+  const emailCurrentUser = user ? JSON.parse(user)?.email : "";
 
   const handleLogout = () => {
     removeToken();
@@ -18,7 +19,7 @@ const TopBar: React.FC = () => {
 
   return (
     <div className="bg-gray-800 text-white p-4 flex h-[5vh] justify-between">
-      <p className="text-sm flex items-center">User : {user}</p>
+      <p className="text-sm flex items-center">User : {emailCurrentUser}</p>
       <button onClick={handleLogout} className="flex items-center">
         <FaSignOutAlt className="mr-1" />
         Logout

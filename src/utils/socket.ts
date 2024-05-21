@@ -1,24 +1,13 @@
 import { io, Socket } from "socket.io-client";
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL || ""; // Adjust the URL to your server's URL
+const SOCKET_URL = process.env.NEXT_PUBLIC_API_URL || "";
+const token = localStorage.getItem("token");
 
-let socket: Socket | null = null;
+const socket: Socket = io(SOCKET_URL, {
+  autoConnect: false,
+  auth: {
+    token,
+  },
+});
 
-export const connectSocket = (token: string): Socket => {
-  if (!socket) {
-    socket = io(SOCKET_URL, {
-      auth: {
-        token,
-      },
-    });
-  }
-
-  return socket;
-};
-
-export const disconnectSocket = (): void => {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-  }
-};
+export default socket;

@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import useLocalStorage from "../hooks/useLocalStorage";
 import { useRouter } from "next/navigation";
-import { connectSocket, disconnectSocket } from "@/utils/socket";
 import OnlineUsersList from "@/components/UserList";
 import PrivateChat from "@/components/PrivateChat";
 import withAuth from "@/utils/withAuth";
+import TopBar from "@/components/TopBar";
+import socket from "@/utils/socket";
 
 export interface User {
   id: string;
@@ -33,6 +34,8 @@ const Home: React.FC = () => {
     onlineUsers: { users: [], isFetched: false },
     historyUsers: { users: [], isFetched: false },
   });
+  const [historyUsers, setHistoryUsers] = useState<User[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
 
   useEffect(() => {
     if (!storedToken && initialized) {
@@ -41,105 +44,84 @@ const Home: React.FC = () => {
   }, [initialized, router, storedToken]);
 
   useEffect(() => {
-    if (storedToken) {
-      const socket = connectSocket(storedToken);
+    socket.connect();
 
-      socket.on("connect_error", (err) => {
-        // Handle connection error if needed
-      });
+    socket.on("connect_error", (err) => {
+      // Handle connection error if needed
+    });
 
-      socket.on("onlineUsers", (users: User[]) => {
-        setUserFetchStatus((prev) => ({
-          ...prev,
-          onlineUsers: {
-            users: users.map((user) => ({ ...user, online: true })),
-            isFetched: true,
-          },
-        }));
-      });
+    socket.on("onlineUsers", (users: User[]) => {
+      setOnlineUsers(users);
+    });
 
-      socket.on("historyUsers", (users: User[]) => {
-        setUserFetchStatus((prev) => ({
-          ...prev,
-          historyUsers: { users, isFetched: true },
-        }));
-      });
+    socket.on("historyUsers", (users: User[]) => {
+      setHistoryUsers(users);
+    });
 
-      return () => disconnectSocket();
-    }
+    return () => {
+      socket.disconnect();
+    };
+    // }
   }, [storedToken, currentUser]);
 
   useEffect(() => {
-    if (
-      userFetchStatus.historyUsers.isFetched &&
-      userFetchStatus.onlineUsers.isFetched
-    ) {
-      const userMap = new Map<string, User>();
+    const mergedUsers = mergeUsers(historyUsers, onlineUsers);
+    setUserList(mergedUsers);
+  }, [onlineUsers, historyUsers]);
 
-      userFetchStatus.historyUsers.users.forEach((user) => {
-        userMap.set(user.userId, { ...user, online: false });
-      });
+  const mergeUsers = (historyUsers: User[], onlineUsers: User[]): User[] => {
+    const userMap = new Map<string, User>();
 
-      userFetchStatus.onlineUsers.users.forEach((user) => {
-        if (user.email === currentUser) {
-          return;
-        }
+    historyUsers.forEach((user) => {
+      userMap.set(user.userId, { ...user, online: false });
+    });
 
-        if (userMap.has(user.userId)) {
-          userMap.set(user.userId, {
-            ...userMap.get(user.userId)!,
-            ...user,
-            online: true,
-          });
-        } else {
-          userMap.set(user.userId, { ...user, unreadCount: 0 });
-        }
-      });
+    onlineUsers.forEach((user) => {
+      if (user.email === JSON.parse(currentUser).email) return;
+      if (userMap.has(user.userId)) {
+        const existingUser = userMap.get(user.userId)!;
+        userMap.set(user.userId, { ...existingUser, ...user, online: true });
+      } else {
+        userMap.set(user.userId, { ...user, unreadCount: 0, online: true });
+      }
+    });
 
-      const newUserList = Array.from(userMap.values()).sort((a, b) => {
-        const aTimestamp = a.latestTimestamp
-          ? new Date(a.latestTimestamp)
-          : null;
-        const bTimestamp = b.latestTimestamp
-          ? new Date(b.latestTimestamp)
-          : null;
-        if (aTimestamp && bTimestamp) {
-          return bTimestamp.getTime() - aTimestamp.getTime(); // Sort in descending order
-        }
-        if (aTimestamp) {
-          return -1;
-        }
-        if (bTimestamp) {
-          return 1;
-        }
-        return 0;
-      });
+    const sortedUsers = Array.from(userMap.values()).sort((a, b) => {
+      const aTimestamp = a.latestTimestamp ? new Date(a.latestTimestamp) : null;
+      const bTimestamp = b.latestTimestamp ? new Date(b.latestTimestamp) : null;
+      if (aTimestamp && bTimestamp) {
+        return bTimestamp.getTime() - aTimestamp.getTime();
+      }
+      if (aTimestamp) {
+        return -1;
+      }
+      if (bTimestamp) {
+        return 1;
+      }
+      return 0;
+    });
 
-      setUserList(newUserList);
-    }
-  }, [
-    currentUser,
-    userFetchStatus.historyUsers.isFetched,
-    userFetchStatus.historyUsers.users,
-    userFetchStatus.onlineUsers.isFetched,
-    userFetchStatus.onlineUsers.users,
-  ]);
+    return sortedUsers;
+  };
 
   const handleUserSelect = (user: User) => setSelectedUser(user);
 
   return (
-    <div className="flex h-[95vh]">
-      <div className="w-1/4 bg-gray-200">
-        <OnlineUsersList
-          onUserSelect={handleUserSelect}
-          users={userList}
-          selectedUser={selectedUser}
-        />
+    <>
+      <TopBar />
+      <div className="flex h-[95vh]">
+        <div className="w-1/4 bg-gray-200">
+          <OnlineUsersList
+            onUserSelect={handleUserSelect}
+            users={userList}
+            selectedUser={selectedUser}
+          />
+        </div>
+        <div className="w-3/4 bg-white">
+          <PrivateChat selectedUser={selectedUser} onlineUsers={userList} />
+        </div>
       </div>
-      <div className="w-3/4 bg-white">
-        <PrivateChat selectedUser={selectedUser} onlineUsers={userList} />
-      </div>
-    </div>
+    </>
   );
 };
 

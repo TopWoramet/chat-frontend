@@ -33,7 +33,7 @@ const SignIn = () => {
   } = useForm<SignInFormInputs>();
   const router = useRouter();
   const [token, tokenInitialized, setToken] = useLocalStorage("token", "");
-  const [user, userInitialized, setUser] = useLocalStorage("user", "");
+  const [, , setUser] = useLocalStorage("user", "");
 
   useEffect(() => {
     if (token && tokenInitialized) {
@@ -51,8 +51,10 @@ const SignIn = () => {
         }
       );
       setToken(response.data.token);
-      const decoded = jwtDecode(response.data.token) 
-      setUser((decoded as any).email);
+      const decoded: any = jwtDecode(response.data.token);
+      setUser(
+        JSON.stringify({ email: decoded.email, username: decoded.username })
+      );
       router.push("/");
     } catch (error: any) {
       console.error("Sign in error", error);
