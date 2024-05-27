@@ -19,21 +19,12 @@ export interface User {
   latestTimestamp?: string;
 }
 
-interface UserFetch {
-  onlineUsers: { users: User[]; isFetched: boolean };
-  historyUsers: { users: User[]; isFetched: boolean };
-}
-
 const Home: React.FC = () => {
   const [storedToken, initialized] = useLocalStorage("token", "");
   const router = useRouter();
   const [userList, setUserList] = useState<User[]>([]);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [currentUser] = useLocalStorage("user", "");
-  const [userFetchStatus, setUserFetchStatus] = useState<UserFetch>({
-    onlineUsers: { users: [], isFetched: false },
-    historyUsers: { users: [], isFetched: false },
-  });
   const [historyUsers, setHistoryUsers] = useState<User[]>([]);
   const [onlineUsers, setOnlineUsers] = useState<User[]>([]);
 

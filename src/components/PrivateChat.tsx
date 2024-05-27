@@ -47,8 +47,6 @@ const truncateContent = (content: string, limit: number = 100) => {
   return content;
 };
 
-const TIME_ALERT_MESSAGE = 5000;
-
 const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState<string>("");
@@ -78,7 +76,7 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
   }, [callbackSendMessage, messages]);
 
   useEffect(() => {
-    socket.on("privateMessage", (message: Message & { from: string }) => {
+    const handlePrivateMessage = (message: Message & { from: string }) => {
       if (selectedUser && selectedUser?.email === message.from) {
         setMessages((prevMessages) => [...prevMessages, message]);
         updateReadMessages([message]);
@@ -93,44 +91,47 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
         audioRef.current.src = "/message-alert.wav";
         audioRef.current.play();
       }
-    });
+    };
+
+    const handleMessagesHistorical = (response: { messages: Message[] }) => {
+      setMessages(response.messages);
+      updateReadMessages(response.messages);
+    };
+
+    const handleMessagesRead = ({
+      messageIds,
+      readTime,
+      from,
+    }: {
+      messageIds: string[];
+      readTime: string;
+      from: string;
+    }) => {
+      if (from === selectedUser?.email || JSON.parse(user).email === from) {
+        setMessages((prevMessages) =>
+          prevMessages.map((message) =>
+            messageIds.includes(message.id!)
+              ? { ...message, readTime }
+              : message
+          )
+        );
+      }
+    };
+
+    socket.on("privateMessage", handlePrivateMessage);
+
     if (selectedUser) {
       socket.emit(
         "messagesHistorical",
         selectedUser?.userId,
-        (response: { messages: Message[] }) => {
-          setMessages(response.messages);
-          updateReadMessages(response.messages);
-        }
+        handleMessagesHistorical
       );
-
-      socket.on(
-        "messagesRead",
-        ({
-          messageIds,
-          readTime,
-          from,
-        }: {
-          messageIds: string[];
-          readTime: string;
-          from: string;
-        }) => {
-          if (from === selectedUser?.email || JSON.parse(user).email === from) {
-            setMessages((prevMessages) =>
-              prevMessages.map((message) =>
-                messageIds.includes(message.id!)
-                  ? { ...message, readTime }
-                  : message
-              )
-            );
-          }
-        }
-      );
+      socket.on("messagesRead", handleMessagesRead);
     }
 
     return () => {
-      socket.off("messagesRead");
-      socket.off("privateMessage");
+      socket.off("messagesRead", handleMessagesRead);
+      socket.off("privateMessage", handlePrivateMessage);
     };
   }, [selectedUser, token, user]);
 
