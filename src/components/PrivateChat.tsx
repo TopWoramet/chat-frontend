@@ -46,19 +46,17 @@ interface AlertMessage {
   from: string;
 }
 
-const truncateContent = (content: string, limit: number = 100) => {
-  if (content.length > limit) {
-    return content.slice(0, limit) + "...";
-  }
-  return content;
-};
+const truncateContent = (content: string, limit: number = 100) =>
+  content.length > limit ? content.slice(0, limit) + "..." : content;
+
+const PAGE_SIZE = 10;
 
 const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState<string>("");
-  const [token] = useLocalStorage("token", "");
+  const [nextPage, setNextPage] = useState<number | null>(1);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [user] = useLocalStorage("user", "");
-  const audioRef = useRef<HTMLAudioElement>(null);
   const [callbackSendMessage, setCallbackSendMessage] =
     useState<CallbackSendMessage | null>(null);
   const [alertMessage, setAlertMessage] = useState<AlertMessage>({
@@ -66,6 +64,11 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
     content: "",
     from: "",
   });
+
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const observer = useRef<IntersectionObserver | null>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const targetRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (callbackSendMessage) {
@@ -86,7 +89,7 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
 
   const handlePrivateMessage = useCallback(
     (message: Message & { from: string }) => {
-      if (selectedUser && selectedUser?.email === message.from) {
+      if (selectedUser && selectedUser.email === message.from) {
         setMessages((prevMessages) => [...prevMessages, message]);
         updateReadMessages([message]);
       } else {
@@ -105,11 +108,36 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
   );
 
   const handleMessagesHistorical = useCallback(
-    (response: { messages: Message[] }) => {
-      setMessages(response.messages);
+    (response: { messages: Message[]; nextPage: number | null }) => {
+      const currentScrollHeight = messageListRef.current?.scrollHeight || 0;
+      setIsLoading(false);
+      setNextPage(response.nextPage);
+      setMessages((prevMessages) => [...response.messages, ...prevMessages]);
       updateReadMessages(response.messages);
+      requestAnimationFrame(() => {
+        if (messageListRef.current) {
+          messageListRef.current.scrollTop =
+            messageListRef.current.scrollHeight - currentScrollHeight + 60;
+        }
+      });
     },
     []
+  );
+
+  const fetchMessages = useCallback(
+    (page: number | null) => {
+      if (selectedUser && page) {
+        setIsLoading(true);
+        socket.emit(
+          "messagesHistorical",
+          selectedUser.userId,
+          page,
+          PAGE_SIZE,
+          handleMessagesHistorical
+        );
+      }
+    },
+    [handleMessagesHistorical, selectedUser]
   );
 
   const handleMessagesRead = useCallback(
@@ -137,26 +165,23 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
 
   useEffect(() => {
     socket.on("privateMessage", handlePrivateMessage);
-
     if (selectedUser) {
-      socket.emit(
-        "messagesHistorical",
-        selectedUser?.userId,
-        handleMessagesHistorical
-      );
+      setMessages([]);
+      setNextPage(null);
+      fetchMessages(1);
       socket.on("messagesRead", handleMessagesRead);
     }
-
     return () => {
       socket.off("messagesRead", handleMessagesRead);
       socket.off("privateMessage", handlePrivateMessage);
     };
-  }, [
-    selectedUser,
-    handlePrivateMessage,
-    handleMessagesHistorical,
-    handleMessagesRead,
-  ]);
+  }, [selectedUser, handlePrivateMessage, handleMessagesRead]);
+
+  useEffect(() => {
+    if (messages.length <= PAGE_SIZE) {
+      scrollToBottom();
+    }
+  }, [messages]);
 
   const updateReadMessages = (messages: Message[]) => {
     const unreadMessages = messages.filter(
@@ -170,8 +195,8 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
 
   const handleMessageSend = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
     if (!selectedUser || !newMessage) return;
+
     const message: MessageCreate = {
       receiverId: selectedUser.userId,
       content: newMessage,
@@ -188,15 +213,37 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
 
     setMessages((prevMessages) => [
       ...prevMessages,
-      {
-        ...message,
-        fromSelf: true,
-        tempId: message.id,
-        id: undefined,
-      },
+      { ...message, fromSelf: true, tempId: message.id, id: undefined },
     ]);
     setNewMessage("");
   };
+
+  const scrollToBottom = () => {
+    if (messageListRef.current) {
+      messageListRef.current.scrollTop = messageListRef.current.scrollHeight;
+    }
+  };
+
+  useEffect(() => {
+    observer.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && nextPage) {
+          fetchMessages(nextPage);
+        }
+      },
+      { root: messageListRef.current, threshold: 0.1 }
+    );
+
+    const target = targetRef.current;
+    if (target) {
+      observer.current.observe(target);
+    }
+    return () => {
+      if (target) {
+        observer.current?.unobserve(target);
+      }
+    };
+  }, [nextPage]);
 
   return (
     <div className="p-4 mx-auto bg-white shadow-lg rounded-lg">
@@ -233,7 +280,17 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
             <strong>Chatting with:</strong>{" "}
             <span className="text-blue-500">{selectedUser.email}</span>
           </div>
-          <div className="mb-4 h-[70vh] overflow-y-auto border p-4 rounded-lg bg-gray-50">
+          <div
+            className="mb-4 h-[70vh] overflow-y-auto border p-4 rounded-lg bg-gray-50"
+            ref={messageListRef}
+          >
+            {isLoading && (
+              <div className="relative  flex justify-center items-center gap-2">
+                <div className="animate-spin loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12" />
+                <p>Loading...</p>
+              </div>
+            )}
+            <div id="infinite-scroll-target" ref={targetRef}></div>
             {messages.map((message, i) => (
               <div
                 key={i}
@@ -248,7 +305,7 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
                       : "bg-gray-200 text-black"
                   }`}
                 >
-                  <p className="">{message.content}</p>
+                  <p>{message.content}</p>
                   <div className="text-xs mt-1">
                     {message.timestamp ? (
                       <small className="text-black rounded-lg bg-green-100 py-0.5 px-1">
