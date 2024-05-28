@@ -1,7 +1,7 @@
 import { User } from "@/app/page";
 import useLocalStorage from "@/hooks/useLocalStorage";
 import dayjs from "dayjs";
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useRef, useState, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import isToday from "dayjs/plugin/isToday";
 import socket from "@/utils/socket";
@@ -63,61 +63,60 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
 
   useEffect(() => {
     if (callbackSendMessage) {
-      const messageSended = messages.find(
-        (message) => message.tempId === callbackSendMessage.tempId
+      setMessages((prevMessages) =>
+        prevMessages.map((message) =>
+          message.tempId === callbackSendMessage.tempId
+            ? { ...message, id: callbackSendMessage.id, timestamp: callbackSendMessage.timestamp }
+            : message
+        )
       );
-      if (messageSended) {
-        messageSended.id = callbackSendMessage.id;
-        messageSended.timestamp = callbackSendMessage.timestamp;
-        setMessages([...messages]);
-        setCallbackSendMessage(null);
-      }
+      setCallbackSendMessage(null);
     }
-  }, [callbackSendMessage, messages]);
+  }, [callbackSendMessage]);
+
+  const handlePrivateMessage = useCallback((message: Message & { from: string }) => {
+    if (selectedUser && selectedUser?.email === message.from) {
+      setMessages((prevMessages) => [...prevMessages, message]);
+      updateReadMessages([message]);
+    } else {
+      setAlertMessage({
+        visible: true,
+        content: truncateContent(message.content),
+        from: message.from,
+      });
+    }
+    if (audioRef.current) {
+      audioRef.current.src = "/message-alert.wav";
+      audioRef.current.play();
+    }
+  }, [selectedUser]);
+
+  const handleMessagesHistorical = useCallback((response: { messages: Message[] }) => {
+    setMessages(response.messages);
+    updateReadMessages(response.messages);
+  }, []);
+
+  const handleMessagesRead = useCallback(({
+    messageIds,
+    readTime,
+    from,
+  }: {
+    messageIds: string[];
+    readTime: string;
+    from: string;
+  }) => {
+    if (from === selectedUser?.email || JSON.parse(user).email === from) {
+      setMessages((prevMessages) =>
+        prevMessages.map((message) =>
+          messageIds.includes(message.id!)
+            ? { ...message, readTime }
+            : message
+        )
+      );
+    }
+  }, [selectedUser, user]);
 
   useEffect(() => {
-    const handlePrivateMessage = (message: Message & { from: string }) => {
-      if (selectedUser && selectedUser?.email === message.from) {
-        setMessages((prevMessages) => [...prevMessages, message]);
-        updateReadMessages([message]);
-      } else {
-        setAlertMessage({
-          visible: true,
-          content: truncateContent(message.content),
-          from: message.from,
-        });
-      }
-      if (audioRef.current) {
-        audioRef.current.src = "/message-alert.wav";
-        audioRef.current.play();
-      }
-    };
-
-    const handleMessagesHistorical = (response: { messages: Message[] }) => {
-      setMessages(response.messages);
-      updateReadMessages(response.messages);
-    };
-
-    const handleMessagesRead = ({
-      messageIds,
-      readTime,
-      from,
-    }: {
-      messageIds: string[];
-      readTime: string;
-      from: string;
-    }) => {
-      if (from === selectedUser?.email || JSON.parse(user).email === from) {
-        setMessages((prevMessages) =>
-          prevMessages.map((message) =>
-            messageIds.includes(message.id!)
-              ? { ...message, readTime }
-              : message
-          )
-        );
-      }
-    };
-
     socket.on("privateMessage", handlePrivateMessage);
 
     if (selectedUser) {
@@ -133,7 +132,7 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
       socket.off("messagesRead", handleMessagesRead);
       socket.off("privateMessage", handlePrivateMessage);
     };
-  }, [selectedUser, token, user]);
+  }, [selectedUser, handlePrivateMessage, handleMessagesHistorical, handleMessagesRead]);
 
   const updateReadMessages = (messages: Message[]) => {
     const unreadMessages = messages.filter(
@@ -163,8 +162,8 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
       }
     );
 
-    setMessages([
-      ...messages,
+    setMessages((prevMessages) => [
+      ...prevMessages,
       {
         ...message,
         fromSelf: true,
