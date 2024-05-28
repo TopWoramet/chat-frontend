@@ -46,6 +46,10 @@ interface AlertMessage {
   from: string;
 }
 
+interface GroupedMessages {
+  [date: string]: Message[];
+}
+
 const truncateContent = (content: string, limit: number = 100) =>
   content.length > limit ? content.slice(0, limit) + "..." : content;
 
@@ -245,6 +249,28 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
     };
   }, [nextPage]);
 
+  useEffect(() => {
+    if (alertMessage.visible) {
+      const timer = setTimeout(() => {
+        setAlertMessage({ visible: false, content: "", from: "" });
+      }, 5000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [alertMessage]);
+
+  const groupedMessages = messages.reduce<GroupedMessages>(
+    (grouped, message) => {
+      const messageDate = dayjs(message.timestamp).format("YYYY-MM-DD");
+      if (!grouped[messageDate]) {
+        grouped[messageDate] = [];
+      }
+      grouped[messageDate].push(message);
+      return grouped;
+    },
+    {}
+  );
+
   return (
     <div className="p-4 mx-auto bg-white shadow-lg rounded-lg">
       <audio ref={audioRef} src="/message-alert.wav" preload="auto" />
@@ -291,47 +317,63 @@ const PrivateChat: React.FC<PrivateChatProps> = ({ selectedUser }) => {
               </div>
             )}
             <div id="infinite-scroll-target" ref={targetRef}></div>
-            {messages.map((message, i) => (
-              <div
-                key={i}
-                className={`mb-3 ${
-                  message.fromSelf ? "text-right" : "text-left"
-                }`}
-              >
+            {Object.entries(groupedMessages).map(([date, messages]) => (
+              <div key={date}>
                 <div
-                  className={`inline-block p-2 rounded-lg ${
-                    message.fromSelf
-                      ? "bg-blue-500 text-white"
-                      : "bg-gray-200 text-black"
-                  }`}
+                  className="flex flex-col items-center sticky top-0"
+                  style={{ position: "-webkit-sticky" }}
                 >
-                  <p>{message.content}</p>
-                  <div className="text-xs mt-1">
-                    {message.timestamp ? (
-                      <small className="text-black rounded-lg bg-green-100 py-0.5 px-1">
-                        Sent at{" "}
-                        {dayjs(message.timestamp).isToday()
-                          ? dayjs(message.timestamp).format("HH:mm")
-                          : dayjs(message.timestamp).format("HH:mm DD/MM/YYYY")}
-                      </small>
-                    ) : (
-                      <small className="text-red-600">send failed</small>
-                    )}
-                    {message.readTime && (
-                      <>
-                        <span> - </span>
-                        <small className="text-black rounded-lg bg-red-100 py-0.5 px-1">
-                          Read at{" "}
-                          {dayjs(message.readTime).isToday()
-                            ? dayjs(message.readTime).format("HH:mm")
-                            : dayjs(message.readTime).format(
-                                "HH:mm DD/MM/YYYY"
-                              )}
-                        </small>
-                      </>
-                    )}
-                  </div>
+                  <p className="bg-slate-200 rounded-full py-1 px-2">
+                    {dayjs(date).isToday()
+                      ? "Today"
+                      : dayjs(date).format("DD/MM/YYYY")}
+                  </p>
                 </div>
+                {messages.map((message, i) => (
+                  <div
+                    key={i}
+                    className={`mb-3 ${
+                      message.fromSelf ? "text-right" : "text-left"
+                    }`}
+                  >
+                    <div
+                      className={`inline-block p-2 rounded-lg ${
+                        message.fromSelf
+                          ? "bg-blue-500 text-white"
+                          : "bg-gray-200 text-black"
+                      }`}
+                    >
+                      <p>{message.content}</p>
+                      <div className="text-xs mt-1">
+                        {message.timestamp ? (
+                          <small className="text-black rounded-lg bg-green-100 py-0.5 px-1">
+                            Sent at{" "}
+                            {dayjs(message.timestamp).isToday()
+                              ? dayjs(message.timestamp).format("HH:mm")
+                              : dayjs(message.timestamp).format(
+                                  "HH:mm DD/MM/YYYY"
+                                )}
+                          </small>
+                        ) : (
+                          <small className="text-red-600">send failed</small>
+                        )}
+                        {message.readTime && (
+                          <>
+                            <span> - </span>
+                            <small className="text-black rounded-lg bg-red-100 py-0.5 px-1">
+                              Read at{" "}
+                              {dayjs(message.readTime).isToday()
+                                ? dayjs(message.readTime).format("HH:mm")
+                                : dayjs(message.readTime).format(
+                                    "HH:mm DD/MM/YYYY"
+                                  )}
+                            </small>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
